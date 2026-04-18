@@ -1,0 +1,73 @@
+services:
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    container_name: survey_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: course_feedback_db
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - survey_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── Express / Node.js Backend ────────────────────────────────────────────────
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: survey_server
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      PORT: 5000
+      # Uses the Docker service name "mongo" instead of localhost
+      MONGO_URI: mongodb://mongo:27017/course_feedback_db
+      JWT_SECRET: ${JWT_SECRET:-course_feedback_jwt_secret_key_2024_secure}
+      NODE_ENV: ${NODE_ENV:-production}
+    ports:
+      - "5000:5000"
+    networks:
+      - survey_net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # ── React Frontend (Nginx) ───────────────────────────────────────────────────
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        # Points the React build to the backend via the Nginx proxy
+        REACT_APP_API_URL: ""
+    container_name: survey_client
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    networks:
+      - survey_net
+
+# ── Persistent storage ─────────────────────────────────────────────────────────
+volumes:
+  mongo_data:
+    driver: local
+
+# ── Shared network ─────────────────────────────────────────────────────────────
+networks:
+  survey_net:
+    driver: bridge
